@@ -1,0 +1,10 @@
+services:
+  tenda-panel:
+    build: .
+    container_name: tenda-panel
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - ./config:/app/config

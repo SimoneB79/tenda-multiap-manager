@@ -1,0 +1,13 @@
+{
+  "password_env": "TENDA_PASSWORD",
+  "refresh_interval_ms": 30000,
+  "aps": [
+    {
+      "id": "example-ap",
+      "name": "Example AP",
+      "ip": "192.168.0.100",
+      "model": "i27V1.1",
+      "location": "Office"
+    }
+  ]
+}
