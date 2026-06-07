@@ -48,6 +48,7 @@ createApp({
   setup() {
     // ── Core state ──
     const aps = ref([]); const loading = ref(false); const view = ref('dashboard');
+    const sidebarOpen = ref(false);
     const selectedAp = ref(null); const snapshot = ref(null); const snapshotLoading = ref(false);
     const editMode = ref(false); const edits = ref({}); const saving = ref(false);
     const activeTab = ref(null);
@@ -591,7 +592,7 @@ createApp({
 
     return {
       // Core
-      aps, loading, view, selectedAp, snapshot, snapshotLoading, editMode, edits, saving, activeTab,
+      aps, loading, view, sidebarOpen, selectedAp, snapshot, snapshotLoading, editMode, edits, saving, activeTab,
       compareLeft, compareRight, compareResult, compareLoading,
       bulkTargets, bulkSource, bulkSourceData, bulkSaving, bulkResults,
       toasts, onlineCount, onlineAps, groupedSnapshot, snapshotCategories, filteredSnapshot, totalClients,
