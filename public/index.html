@@ -116,6 +116,9 @@
     <!-- ── MAIN APP ── -->
     <template v-if="!setupNeeded || view !== 'setup'">
     <header class="topbar">
+      <button class="hamburger" @click="sidebarOpen = !sidebarOpen" :class="{ active: sidebarOpen }">
+        <span></span><span></span><span></span>
+      </button>
       <div class="topbar-left">
         <span class="logo">📡 Tenda Multi-AP Manager</span>
       </div>
@@ -128,22 +131,23 @@
       </div>
     </header>
 
+    <div class="sidebar-backdrop" :class="{ visible: sidebarOpen }" @click="sidebarOpen = false"></div>
     <div class="layout">
-      <aside class="sidebar">
+      <aside class="sidebar" :class="{ open: sidebarOpen }">
         <nav class="sidebar-nav">
-          <a :class="{ active: view === 'dashboard' }" @click.prevent="view = 'dashboard'; selectedAp = null; snapshot = null">
+          <a :class="{ active: view === 'dashboard' }" @click.prevent="view = 'dashboard'; selectedAp = null; snapshot = null; sidebarOpen = false">
             <span class="nav-icon">⊞</span> Dashboard
           </a>
-          <a :class="{ active: view === 'compare' }" @click.prevent="view = 'compare'; selectedAp = null; snapshot = null">
+          <a :class="{ active: view === 'compare' }" @click.prevent="view = 'compare'; selectedAp = null; snapshot = null; sidebarOpen = false">
             <span class="nav-icon">⇄</span> Compare
           </a>
-          <a :class="{ active: view === 'bulk' }" @click.prevent="view = 'bulk'; selectedAp = null; snapshot = null">
+          <a :class="{ active: view === 'bulk' }" @click.prevent="view = 'bulk'; selectedAp = null; snapshot = null; sidebarOpen = false">
             <span class="nav-icon">⚡</span> Bulk Edit
           </a>
-          <a :class="{ active: view === 'tools' }" @click.prevent="view = 'tools'; selectedAp = null; snapshot = null">
+          <a :class="{ active: view === 'tools' }" @click.prevent="view = 'tools'; selectedAp = null; snapshot = null; sidebarOpen = false">
             <span class="nav-icon">🔧</span> Tools
           </a>
-          <a :class="{ active: view === 'firmware' }" @click.prevent="view = 'firmware'; selectedAp = null; snapshot = null">
+          <a :class="{ active: view === 'firmware' }" @click.prevent="view = 'firmware'; selectedAp = null; snapshot = null; sidebarOpen = false">
             <span class="nav-icon">📦</span> Firmware
           </a>
         </nav>
@@ -152,7 +156,7 @@
           <div v-if="aps.length === 0" class="sidebar-empty">Loading...</div>
           <a v-for="ap in aps" :key="ap.id"
              :class="['sidebar-ap', { active: selectedAp?.id === ap.id, offline: !ap.online, disabled: ap.enabled === false }]"
-             @click.prevent="selectAp(ap)">
+             @click.prevent="selectAp(ap); sidebarOpen = false">
             <span class="status-dot" :class="ap.online ? 'dot-green' : (ap.enabled === false ? 'dot-gray' : 'dot-red')"></span>
             <span class="ap-name">{{ ap.name }}</span>
             <span class="ap-model">{{ ap.model }}</span>
