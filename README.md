@@ -6,19 +6,38 @@ A web-based management panel for **multiple Tenda access points**. Monitor, conf
 ![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?style=flat-square&logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
+## Screenshots
+
+### Dashboard — Overview & AP Detail
+![Dashboard](screenshots/dashboard.png)
+
+### AP Detail — Tabs, Config, Clients
+![AP Detail](screenshots/ap-detail.png)
+
+### Compare — Side-by-side Diff
+![Compare](screenshots/compare.png)
+
+### Tools — Reboot, SSID Cleanup, Uplink Detection
+![Tools](screenshots/tools.png)
+
+### Firmware — Online Check & Upload
+![Firmware](screenshots/firmware.png)
+
 ## Features
 
 - **Dashboard** — Overview of all APs with online/offline status, model, and firmware
-- **AP Detail** — Full config snapshot (radio, SSID, security, VLAN, QoS, roaming, clients)
-- **Inline Edit** — Change settings directly from the UI with live apply
+- **AP Detail** — Full config snapshot with schema-driven tabs (radio, SSID, security, VLAN, QoS, roaming, clients)
+- **Inline Edit** — Change settings directly from the UI with live apply and password-protected operations
 - **Compare** — Side-by-side diff of any two APs
 - **Bulk Edit** — Copy Wi-Fi config from one AP to multiple targets
 - **SSID Cleanup** — Disable unused SSIDs (#2–#8) across all APs
 - **Reboot** — Reboot individual or multiple APs
 - **Firmware** — Check online updates, upload .bin files, batch upgrade
 - **Setup Wizard** — Auto-discover Tenda APs on your network with guided setup
+- **Settings** — Add/remove APs at runtime without editing config files
 - **Home Assistant** — MQTT auto-discovery for sensor integration
 - **Multi-model** — Supports i27, OAP1200, and other Tenda business APs
+- **Responsive** — Mobile-friendly with hamburger sidebar and adaptive layout
 
 ## Supported Models
 

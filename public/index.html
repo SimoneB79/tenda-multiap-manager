@@ -1,657 +1,642 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tenda Multi-AP Manager</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>">
-  <link rel="stylesheet" href="/css/app.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tenda Multi-AP Manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>">
+<link rel="stylesheet" href="/css/app.css?v=20260714b">
 </head>
 <body>
-  <div id="app">
-    <!-- ── SETUP WIZARD ── -->
-    <div v-if="setupNeeded && view === 'setup'" class="setup-wrapper">
-      <div class="setup-container">
-        <div class="setup-logo">📡</div>
-        <h1 class="setup-title">Tenda Multi-AP Manager</h1>
-        <p class="setup-subtitle">Setup Wizard</p>
+<div id="app"></div>
 
-        <!-- Step 1: Discovery -->
-        <div v-if="setupStep === 1" class="setup-step">
-          <h2>1. Discover Access Points</h2>
-          <p class="hint">Scan your network for Tenda APs. Make sure your APs are powered on and connected.</p>
+<script type="text/x-template" id="app-tmpl">
 
-          <div class="setup-form-row">
-            <div class="form-group" style="flex:1">
-              <label>Subnet</label>
-              <input type="text" v-model="setupSubnet" placeholder="192.168.0" class="edit-input">
-            </div>
-            <button class="btn btn-primary" @click="runDiscovery" :disabled="setupDiscovering">
-              <span v-if="setupDiscovering" class="spinner"></span>
-              <span v-else>🔍</span> Scan
-            </button>
+<!-- ── SETUP WIZARD ── -->
+<template v-if="setupNeeded && mainView === 'setup'">
+  <div class="setup-wrapper">
+    <div class="setup-container">
+      <div class="setup-logo">📡</div>
+      <h1 class="setup-title">Tenda Multi-AP Manager</h1>
+      <p class="setup-subtitle">Setup Wizard</p>
+
+      <!-- Step 1: Discovery -->
+      <div v-if="setupStep === 1" class="setup-step">
+        <h2>Step 1 — Discover your Tenda APs</h2>
+        <p class="setup-hint">Enter your network subnet to auto-discover Tenda access points.</p>
+        <div class="setup-form-row">
+          <div class="input-group">
+            <label>Subnet</label>
+            <input type="text" v-model="setupSubnet" placeholder="192.168.0" class="edit-input">
+            <small>Format: 192.168.0 (without the last octet)</small>
           </div>
+          <button class="btn btn-primary" @click="runDiscovery" :disabled="setupDiscovering">
+            <span v-if="setupDiscovering" class="spinner"></span>
+            <span v-if="!setupDiscovering">🔍 Scan Network</span>
+            <span v-if="setupDiscovering">Scanning...</span>
+          </button>
+        </div>
 
-          <div v-if="setupDiscovering" class="setup-scanning">
-            <div class="spinner-lg"></div>
-            <p>Scanning {{ setupSubnet }}.0/24... This takes about 10-15 seconds.</p>
+        <div v-if="setupDiscovering" class="setup-scanning">
+          <div class="spinner-large"></div>
+          <p>Scanning {{ setupSubnet }}.0/24... This takes about 10-15 seconds.</p>
+        </div>
+
+        <div v-if="setupDiscovered.length > 0" class="setup-discovered">
+          <h3>Found {{ setupDiscovered.length }} AP(s)</h3>
+          <div v-for="(ap, i) in setupSelectedAps" :key="ap.ip || i" class="setup-ap-row">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="ap.selected">
+              <span class="ap-ip">{{ ap.ip }}</span>
+              <span class="ap-model">{{ ap.model }}</span>
+            </label>
+            <input type="text" v-model="ap.name" placeholder="AP name" class="edit-input setup-ap-name">
+            <input type="text" v-model="ap.location" placeholder="Location (optional)" class="edit-input setup-ap-loc">
           </div>
+          <button class="btn btn-link" @click="addManualAp">+ Add AP manually</button>
+        </div>
 
-          <div v-if="setupDiscovered.length > 0" class="setup-discovered">
-            <h3>Found {{ setupDiscovered.length }} AP(s)</h3>
-            <div v-for="(ap, i) in setupSelectedAps" :key="ap.ip" class="setup-ap-row">
-              <label class="bulk-ap-check">
-                <input type="checkbox" v-model="ap.selected">
-                <span class="status-dot dot-green"></span>
-              </label>
-              <span class="setup-ap-ip">{{ ap.ip }}</span>
-              <input type="text" v-model="ap.name" placeholder="AP name" class="edit-input setup-name-input">
-              <span class="setup-ap-model">{{ ap.model }}</span>
-            </div>
+        <div v-if="setupSelectedAps.length > 0" class="setup-nav">
+          <button class="btn btn-primary" @click="setupStep = 2" :disabled="!setupSelectedAps.some(a => a.selected)">
+            Next →
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: Password + Test -->
+      <div v-if="setupStep === 2" class="setup-step">
+        <h2>Step 2 — Enter AP Password</h2>
+        <p class="setup-hint">Enter the admin password for your Tenda APs. This password is used for all APs.</p>
+        <div class="setup-form-row">
+          <div class="input-group">
+            <label>Password</label>
+            <input type="password" v-model="setupPassword" placeholder="Admin password" class="edit-input">
           </div>
+          <button class="btn btn-primary" @click="testSetupConnections" :disabled="setupTesting || !setupPassword">
+            <span v-if="setupTesting" class="spinner"></span>
+            <span v-if="!setupTesting">🔑 Test Connection</span>
+            <span v-if="setupTesting">Testing...</span>
+          </button>
+        </div>
 
-          <div v-if="setupDiscovered.length === 0 && !setupDiscovering" class="setup-empty">
-            <p>No APs discovered yet. Click "Scan" to search your network.</p>
-            <p class="hint">You can also add APs manually:</p>
-          </div>
-
-          <!-- Manual add -->
-          <div class="setup-manual">
-            <button class="btn btn-outline btn-sm" @click="addManualAp">+ Add manually</button>
-            <div v-for="(ap, i) in setupSelectedAps" :key="'m-'+i" v-show="ap.manual" class="setup-ap-row">
-              <input type="text" v-model="ap.ip" placeholder="192.168.0.100" class="edit-input" style="width:140px">
-              <input type="text" v-model="ap.name" placeholder="AP name" class="edit-input" style="width:140px">
-              <select v-model="ap.model" class="edit-select" style="width:140px">
-                <option value="i27V1.1">i27</option>
-                <option value="OAP1200V2.0">OAP1200</option>
-              </select>
-              <button class="btn btn-outline btn-sm" @click="removeSetupAp(i)" style="color:var(--red)">✕</button>
-            </div>
-          </div>
-
-          <div class="setup-actions" v-if="setupSelectedAps.some(a => a.selected)">
-            <button class="btn btn-primary" @click="setupStep = 2">Next → Configure password</button>
+        <div v-if="Object.keys(setupTestResults).length > 0" class="setup-results">
+          <div v-for="(result, ip) in setupTestResults" :key="ip" class="setup-test-row" :class="result.success ? 'ok' : 'fail'">
+            <span>{{ ip }}</span>
+            <span v-if="result.success">✅ {{ result.model }}</span>
+            <span v-else>❌ {{ result.error }}</span>
           </div>
         </div>
 
-        <!-- Step 2: Password -->
-        <div v-if="setupStep === 2" class="setup-step">
-          <h2>2. Configure Access</h2>
-          <p class="hint">Enter the admin password for your Tenda APs. All APs must share the same password.</p>
-
-          <div class="form-group" style="max-width:400px">
-            <label>AP Admin Password</label>
-            <input type="password" v-model="setupPassword" class="edit-input" placeholder="Enter password" @keydown.enter="testSetupConnections">
-          </div>
-
-          <div class="setup-actions">
-            <button class="btn btn-outline" @click="setupStep = 1">← Back</button>
-            <button class="btn btn-outline" @click="testSetupConnections" :disabled="setupTesting || !setupPassword">
-              <span v-if="setupTesting" class="spinner"></span>
-              <span v-else>🔌</span> Test connection
-            </button>
-            <button class="btn btn-primary" @click="saveSetup" :disabled="setupSaving || !setupPassword">
-              <span v-if="setupSaving" class="spinner"></span>
-              <span v-else>💾</span> Save & Start
-            </button>
-          </div>
-
-          <div v-if="Object.keys(setupTestResults).length > 0" class="setup-test-results">
-            <div v-for="(result, ip) in setupTestResults" :key="ip" class="bulk-result-item" :class="result.success ? 'result-ok' : 'result-err'">
-              <strong>{{ ip }}</strong>: {{ result.success ? `✅ Connected (${result.model})` : `❌ ${result.error}` }}
-            </div>
-          </div>
+        <div class="setup-nav">
+          <button class="btn btn-outline" @click="setupStep = 1">← Back</button>
+          <button class="btn btn-primary" @click="saveSetup" :disabled="setupSaving">
+            <span v-if="setupSaving" class="spinner"></span>
+            <span v-if="!setupSaving">✓ Complete Setup</span>
+            <span v-if="setupSaving">Saving...</span>
+          </button>
         </div>
+      </div>
 
-        <!-- Step 3: Done -->
-        <div v-if="setupStep === 3" class="setup-step setup-done">
-          <div class="setup-checkmark">✅</div>
-          <h2>Setup Complete!</h2>
-          <p>Your APs are configured and ready.</p>
-          <button class="btn btn-primary" @click="refreshAll(); setupNeeded = false;">Go to Dashboard →</button>
-        </div>
+      <!-- Step 3: Done -->
+      <div v-if="setupStep === 3" class="setup-step">
+        <h2>✅ Setup Complete!</h2>
+        <p>Your APs have been configured. You can now manage them from the dashboard.</p>
+        <button class="btn btn-primary" @click="refreshAll(); setupNeeded = false;">Go to Dashboard →</button>
       </div>
     </div>
+  </div>
+</template>
 
-    <!-- ── MAIN APP ── -->
-    <template v-if="!setupNeeded || view !== 'setup'">
-    <header class="topbar">
-      <button class="hamburger" @click="sidebarOpen = !sidebarOpen" :class="{ active: sidebarOpen }">
-        <span></span><span></span><span></span>
-      </button>
-      <div class="topbar-left">
-        <span class="logo">📡 Tenda Multi-AP Manager</span>
-      </div>
-      <div class="topbar-right">
-        <button class="btn btn-outline btn-sm" @click="openSettings">⚙️ Settings</button>
-        <button class="btn btn-outline" @click="refreshAll" :disabled="loading">
-          <span v-if="loading" class="spinner"></span>
-          <span v-else>↻</span> Refresh
-        </button>
-      </div>
-    </header>
+<!-- ── MAIN APP ── -->
+<template v-if="!setupNeeded || mainView !== 'setup'">
+<header class="topbar">
+  <button class="hamburger" @click="sidebarOpen = !sidebarOpen" :class="{ active: sidebarOpen }">
+    <span></span><span></span><span></span>
+  </button>
+  <div class="topbar-left"><span class="logo">📡 Tenda Multi-AP Manager</span></div>
+  <div class="topbar-center">
+    <select v-model="selApId" class="topbar-ap-select" v-if="mainView === 'dashboard'">
+      <option value="">— Scegli AP —</option>
+      <option v-for="ap in aps" :key="ap.id" :value="ap.id">{{ ap.name }} ({{ ap.ip }})</option>
+    </select>
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-sm btn-outline" @click="refreshAll" :disabled="loading">
+      <span v-if="loading" class="spinner"></span><span v-else>↻</span> Refresh
+    </button>
+  </div>
+</header>
 
-    <div class="sidebar-backdrop" :class="{ visible: sidebarOpen }" @click="sidebarOpen = false"></div>
-    <div class="layout">
-      <aside class="sidebar" :class="{ open: sidebarOpen }">
-        <nav class="sidebar-nav">
-          <a :class="{ active: view === 'dashboard' }" @click.prevent="view = 'dashboard'; selectedAp = null; snapshot = null; sidebarOpen = false">
-            <span class="nav-icon">⊞</span> Dashboard
-          </a>
-          <a :class="{ active: view === 'compare' }" @click.prevent="view = 'compare'; selectedAp = null; snapshot = null; sidebarOpen = false">
-            <span class="nav-icon">⇄</span> Compare
-          </a>
-          <a :class="{ active: view === 'bulk' }" @click.prevent="view = 'bulk'; selectedAp = null; snapshot = null; sidebarOpen = false">
-            <span class="nav-icon">⚡</span> Bulk Edit
-          </a>
-          <a :class="{ active: view === 'tools' }" @click.prevent="view = 'tools'; selectedAp = null; snapshot = null; sidebarOpen = false">
-            <span class="nav-icon">🔧</span> Tools
-          </a>
-          <a :class="{ active: view === 'firmware' }" @click.prevent="view = 'firmware'; selectedAp = null; snapshot = null; sidebarOpen = false">
-            <span class="nav-icon">📦</span> Firmware
-          </a>
-        </nav>
-        <div class="sidebar-section">
-          <div class="sidebar-title">Access Points</div>
-          <div v-if="aps.length === 0" class="sidebar-empty">Loading...</div>
-          <a v-for="ap in aps" :key="ap.id"
-             :class="['sidebar-ap', { active: selectedAp?.id === ap.id, offline: !ap.online, disabled: ap.enabled === false }]"
-             @click.prevent="selectAp(ap); sidebarOpen = false">
-            <span class="status-dot" :class="ap.online ? 'dot-green' : (ap.enabled === false ? 'dot-gray' : 'dot-red')"></span>
-            <span class="ap-name">{{ ap.name }}</span>
-            <span class="ap-model">{{ ap.model }}</span>
-          </a>
-        </div>
-      </aside>
+<div class="sidebar-backdrop" :class="{ visible: sidebarOpen }" @click="sidebarOpen = false"></div>
+<div class="layout">
+  <aside class="sidebar" :class="{ open: sidebarOpen }">
+    <nav class="sidebar-nav">
+      <a :class="{ active: mainView === 'dashboard' }" @click.prevent="mainView = 'dashboard'; sidebarOpen = false">
+        <span class="nav-icon">⊞</span> Dashboard
+      </a>
+      <a :class="{ active: mainView === 'compare' }" @click.prevent="mainView = 'compare'; sidebarOpen = false">
+        <span class="nav-icon">⇄</span> Confronta
+      </a>
+      <a :class="{ active: mainView === 'bulk' }" @click.prevent="mainView = 'bulk'; sidebarOpen = false">
+        <span class="nav-icon">⚡</span> Modifica multipla
+      </a>
+      <a :class="{ active: mainView === 'tools' }" @click.prevent="mainView = 'tools'; sidebarOpen = false">
+        <span class="nav-icon">🔧</span> Strumenti
+      </a>
+      <a :class="{ active: mainView === 'firmware' }" @click.prevent="mainView = 'firmware'; sidebarOpen = false">
+        <span class="nav-icon">📦</span> Firmware
+      </a>
+    </nav>
+  </aside>
 
-      <main class="content">
-        <!-- Dashboard -->
-        <div v-if="view === 'dashboard' && !selectedAp" class="dashboard">
-          <div class="page-header">
-            <h1>Dashboard</h1>
-            <p class="subtitle">{{ onlineCount }} / {{ aps.length }} APs online</p>
+  <main class="content">
+    <!-- ═══════ DASHBOARD ═══════ -->
+    <div v-if="mainView === 'dashboard'">
+      <!-- Overview strip (always visible) -->
+      <div class="overview-strip">
+        <div class="overview-stats">
+          <div class="ov-stat">
+            <span class="ov-number" :class="{ 'ov-ok': dashboardSummary.online === dashboardSummary.total }">{{ dashboardSummary.online }}/{{ dashboardSummary.total }}</span>
+            <span class="ov-label">AP Online</span>
           </div>
-          <div class="ap-grid">
-            <div v-for="ap in aps" :key="ap.id" class="ap-card" :class="{ offline: !ap.online, disabled: ap.enabled === false }" @click="selectAp(ap)">
-              <div class="card-header">
-                <span class="card-status" :class="ap.online ? 'status-online' : 'status-offline'"></span>
-                <h3>{{ ap.name }}</h3>
-              </div>
-              <div class="card-body">
-                <div class="card-row"><span>IP</span><span>{{ ap.ip }}</span></div>
-                <div class="card-row"><span>Model</span><span>{{ ap.model }}</span></div>
-                <div class="card-row" v-if="ap.firmware"><span>Firmware</span><span>{{ ap.firmware }}</span></div>
-                <div class="card-row" v-if="ap.error"><span class="text-error">{{ ap.error }}</span></div>
-              </div>
-            </div>
+          <div class="ov-stat">
+            <span class="ov-number">{{ dashboardSummary.totalClients }}</span>
+            <span class="ov-label">Client</span>
           </div>
         </div>
+        <div v-if="dashboardSummary.offline > 0" class="ov-alert">
+          ⚠️ {{ dashboardSummary.offline }} offline: {{ offlineAps.map(a => a.name).join(', ') }}
+        </div>
+        <div v-else class="ov-ok-msg">✅ Tutti online</div>
+      </div>
 
-        <!-- AP Detail -->
-        <div v-if="view === 'dashboard' && selectedAp" class="detail">
-          <div class="page-header">
-            <button class="btn btn-outline btn-sm" @click="selectedAp = null; snapshot = null; editMode = false">← Back</button>
-            <h1>{{ selectedAp.name }} <span class="ap-ip">{{ selectedAp.ip }}</span></h1>
-            <div class="header-actions">
-              <button v-if="!editMode" class="btn btn-outline btn-sm" @click="enterEditMode" :disabled="!snapshot">✏️ Edit</button>
-              <button v-if="editMode" class="btn btn-outline btn-sm" @click="cancelEdit">✕ Cancel</button>
-              <button v-if="editMode" class="btn btn-primary btn-sm" @click="saveChanges" :disabled="saving">
-                <span v-if="saving" class="spinner"></span><span v-else>💾</span> Save
-              </button>
-              <button class="btn btn-outline btn-sm" @click="loadSnapshot(selectedAp.id)" :disabled="snapshotLoading">
-                <span v-if="snapshotLoading" class="spinner"></span><span v-else>↻</span> Reload
-              </button>
+      <!-- AP mini-cards strip (always visible, dynamic) -->
+      <div class="ap-strip">
+        <div v-for="ap in aps" :key="ap.id"
+             class="ap-mini"
+             :class="{ offline: !ap.online, disabled: ap.enabled === false, selected: selApId === ap.id }"
+             @click="selApId = ap.id">
+          <span class="mini-dot" :class="ap.online ? 'dot-on' : 'dot-off'"></span>
+          <span class="mini-name">{{ ap.name }}</span>
+          <span class="mini-ip">{{ ap.ip }}</span>
+          <span class="mini-clients" v-if="mqttStatus[ap.id]?.online">{{ (mqttStatus[ap.id].clients_24g || 0) + (mqttStatus[ap.id].clients_5g || 0) }} 👥</span>
+        </div>
+      </div>
+
+      <!-- AP selected → Tab Editor -->
+      <div v-if="selApId">
+        <div class="tab-bar" v-if="tabs">
+          <button v-for="(tab, key) in tabs" :key="key" :class="['tab-btn', { active: selTab === key }]" @click="setTab(key)">
+            {{ tab.icon || '•' }} {{ tab.label }}
+          </button>
+        </div>
+
+        <div v-if="error" class="alert alert-error">{{ error }}</div>
+        <div v-if="msg" class="alert alert-ok">{{ msg }}</div>
+
+        <div v-if="snapshot" class="tab-content">
+          <!-- STATUS TAB -->
+          <div v-if="selTab === 'status'" class="status-grid">
+            <div class="ap-info-card" v-if="selAp">
+              <h2>📋 {{ selAp.name }}</h2>
+              <div class="info-rows">
+                <div class="info-row"><strong>Modello</strong>: <span>{{ selAp.model }}</span></div>
+                <div class="info-row"><strong>IP</strong>: <span>{{ selAp.ip }}</span></div>
+                <div class="info-row"><strong>Firmware</strong>: <span>{{ selAp.firmware || '—' }}</span></div>
+              </div>
+            </div>
+            <div v-for="snapKey in ['clients_24g','clients_5g']" :key="snapKey" class="client-card">
+              <h3>{{ snapKey === 'clients_5g' ? '📶 Client 5 GHz' : '📶 Client 2.4 GHz' }}</h3>
+              <div v-if="getModuleData(snapKey)?.length" class="clients-grid">
+                <table class="clients-table">
+                  <thead><tr><th>MAC</th><th>IP</th><th>Segnale</th><th>Tx Rate</th><th>Connesso</th></tr></thead>
+                  <tbody>
+                    <tr v-for="cl in getModuleData(snapKey)" :key="cl.mac">
+                      <td class="monospace">{{ cl.mac }}</td><td>{{ cl.ip }}</td>
+                      <td><span :class="signalClass(clientSignal(cl))">{{ clientSignal(cl) || '—' }}<span v-if="cl.signNoise" class="signal-noise">({{ cl.signNoise }})</span></span></td>
+                      <td>{{ cl.txRate || '—' }}<span v-if="cl.txRate"> Mbps</span></td><td>{{ cl.connectTime || '—' }}<span v-if="cl.connectTime">s</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-else class="text-muted">Nessun client</p>
             </div>
           </div>
 
-          <div v-if="editMode" class="edit-banner">
-            ⚠️ Edit mode — changes will be applied directly to <strong>{{ selectedAp.name }}</strong>
-          </div>
+          <!-- CONFIG TABS -->
+          <div v-if="selTab !== 'status'" class="config-sections">
+            <div v-for="modName in currentTab.modules" :key="modName" class="config-block">
+              <div class="config-block-header">
+                <h3>{{ fieldDefs?.fields?.[modName]?.label || modName }}</h3>
+                <div class="config-block-actions">
+                  <button v-if="fieldDefs?.fields?.[modName]?.setter" class="btn btn-sm btn-primary"
+                          @click="fieldDefs?.fields?.[modName]?.passwordRequired ? requestPassword(modName) : saveModule(modName)"
+                          :disabled="saving[modName]">
+                    <span v-if="saving[modName]" class="spinner"></span><span v-else>💾</span> Salva
+                  </button>
+                </div>
+              </div>
+              <div v-if="saveErrors[modName]" class="alert alert-error">{{ saveErrors[modName] }}</div>
 
-          <div v-if="snapshotLoading" class="loading-state">
-            <div class="spinner-lg"></div>
-            <p>Loading configuration...</p>
-          </div>
+              <!-- Regular fields -->
+              <div v-if="fieldDefs?.fields?.[modName]?.fields" class="form-grid">
+                <div v-for="(fdef, fkey) in fieldDefs.fields[modName].fields" :key="fkey"
+                     v-show="isShown(fkey, fdef, editorVals[modName])" class="form-field">
+                  <label>{{ fdef.label }}</label>
 
-          <div v-else-if="snapshot" class="config-sections">
-            <div class="cat-tabs">
-              <button v-for="cat in snapshotCategories" :key="cat"
-                      :class="['cat-tab', { active: activeTab === cat }]"
-                      @click="activeTab = cat">
-                {{ categoryLabel(cat) }}
-                <span v-if="cat === 'clients'" class="tab-badge">{{ totalClients }}</span>
-              </button>
-            </div>
+                  <label v-if="fdef.type === 'toggle'" class="toggle">
+                    <input type="checkbox" :checked="getFieldValue(fkey, fdef, editorVals[modName])"
+                           @change="editorVals[modName][fkey] = $event.target.checked" :disabled="fdef.readonly">
+                    <span class="toggle-slider"></span>
+                  </label>
 
-            <div v-for="(modules, category) in filteredSnapshot" :key="category" class="config-section">
-              <h2 class="section-title">{{ categoryLabel(category) }}</h2>
+                  <select v-else-if="fdef.type === 'select' && fdef.options" class="edit-select"
+                          :value="getFieldValue(fkey, fdef, editorVals[modName])"
+                          @change="editorVals[modName][fkey] = $event.target.value" :disabled="fdef.readonly">
+                    <option v-for="(label, val) in resolveOptions(fdef.options)" :key="val" :value="val">{{ label }}</option>
+                  </select>
 
-              <template v-for="(mod, idx) in modules" :key="idx">
-                <div v-if="shouldShowModule(mod)" class="config-block">
-                  <div class="config-block-header">
-                    <h3>{{ mod.label }}</h3>
-                    <span v-if="mod.data && mod.data.ssidEn === false && mod.category === 'wifi'" class="badge badge-muted">Disabled</span>
-                    <span v-if="mod.error" class="text-error">Error: {{ mod.error }}</span>
+                  <div v-else-if="fdef.type === 'slider'" class="slider-row">
+                    <input type="range" :min="fdef.min" :max="fdef.max" :step="fdef.step || 1"
+                           :value="getFieldValue(fkey, fdef, editorVals[modName])"
+                           @input="editorVals[modName][fkey] = Number($event.target.value)" :disabled="fdef.readonly">
+                    <span class="slider-val">{{ editorVals[modName]?.[fkey] || getFieldValue(fkey, fdef, editorVals[modName]) }} {{ fdef.suffix || '' }}</span>
                   </div>
 
-                  <template v-if="mod.category === 'clients'">
-                    <div v-if="mod.data && mod.data.length > 0" class="clients-grid">
-                      <table class="clients-table">
-                        <thead><tr>
-                          <th>#</th><th>MAC</th><th>IP</th><th>Signal</th><th>Tx Rate</th><th>Time</th><th>OS</th>
-                        </tr></thead>
-                        <tbody>
-                          <tr v-for="(cl, ci) in mod.data" :key="ci">
-                            <td>{{ cl.index }}</td>
-                            <td class="monospace">{{ cl.mac }}</td>
-                            <td>{{ cl.ip }}</td>
-                            <td><span :class="signalClass(cl.signal)">{{ cl.signal }} dBm</span></td>
-                            <td>{{ cl.txRate }} Mbps</td>
-                            <td>{{ formatUptime(cl.connectTime) }}</td>
-                            <td>{{ cl.osType || '—' }}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    <div v-else class="text-muted">No clients connected</div>
-                  </template>
+                  <input v-else-if="fdef.type === 'password'" type="password" class="edit-input"
+                         :value="getFieldValue(fkey, fdef, editorVals[modName])"
+                         @input="editorVals[modName][fkey] = $event.target.value" :disabled="fdef.readonly">
 
-                  <template v-else>
-                    <table v-if="mod.data && typeof mod.data === 'object'" class="config-table">
-                      <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+                  <span v-else-if="fdef.readonly" class="readonly-val">{{ getFieldValue(fkey, fdef, editorVals[modName]) }}</span>
+
+                  <input v-else-if="fdef.type === 'number'" type="number" class="edit-input" :min="fdef.min" :max="fdef.max"
+                         :step="fdef.step || 1" :value="getFieldValue(fkey, fdef, editorVals[modName])"
+                         @input="editorVals[modName][fkey] = Number($event.target.value)">
+
+                  <input v-else type="text" class="edit-input"
+                         :value="getFieldValue(fkey, fdef, editorVals[modName])"
+                         @input="editorVals[modName][fkey] = $event.target.value" :disabled="fdef.readonly"
+                         :maxlength="fdef.maxLength" :placeholder="fdef.placeholder || ''">
+
+                  <span v-if="fdef.hint" class="field-hint">{{ fdef.hint }}</span>
+                </div>
+              </div>
+
+              <!-- Tabular editors -->
+              <div v-if="fieldDefs?.fields?.[modName]?.tabular && fieldDefs?.fields?.[modName]?.tables" class="tabular-editor">
+                <div v-for="(tdef, tkey) in fieldDefs.fields[modName].tables" :key="tkey">
+                  <h4 style="margin-top:12px">{{ tdef.label }}</h4>
+
+                  <!-- MAC List -->
+                  <div v-if="tkey === 'macList'">
+                    <table class="tabular-table">
+                      <thead><tr><th>MAC Address</th><th></th></tr></thead>
                       <tbody>
-                        <tr v-for="(value, field) in mod.data" :key="field">
-                          <td class="param-name">{{ field }}</td>
-                          <td class="param-value">
-                            <template v-if="editMode && isEditable(mod.name, field)">
-                              <label v-if="typeof value === 'boolean'" class="toggle">
-                                <input type="checkbox" :checked="value" @change="setEdit(mod.name, field, $event.target.checked)">
-                                <span class="toggle-slider"></span>
-                              </label>
-                              <select v-else-if="getOptions(mod.name, field)" class="edit-select"
-                                      :value="getEditValue(mod.name, field, value)"
-                                      @change="setEdit(mod.name, field, $event.target.value)">
-                                <option v-for="opt in getOptions(mod.name, field)" :key="opt" :value="opt">{{ opt }}</option>
-                              </select>
-                              <input v-else type="text" class="edit-input"
-                                     :value="getEditValue(mod.name, field, value)"
-                                     @input="setEdit(mod.name, field, $event.target.value)">
-                            </template>
-                            <template v-else>
-                              <span v-if="isPassword(field)">••••••••</span>
-                              <span v-else-if="typeof value === 'boolean'" :class="value ? 'text-yes' : 'text-no'">{{ value ? '✓ Yes' : '✗ No' }}</span>
-                              <span v-else>{{ formatValue(value) }}</span>
-                            </template>
-                            <span v-if="editMode && isEditable(mod.name, field) && hasEdit(mod.name, field)" class="changed-dot" title="Modified">●</span>
+                        <tr v-for="(row, ri) in (editorVals[modName + '.macList'] || getModuleData(modName)?.macList || [])" :key="ri">
+                          <td class="monospace">{{ row.mac || row }}</td>
+                          <td><button class="btn btn-sm btn-outline" @click="removeMacRow(modName, ri)">✕</button></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <button class="btn btn-sm btn-outline" style="margin-top:6px" @click="addMacRow(modName)">+ Aggiungi MAC</button>
+                  </div>
+
+                  <!-- WiFi Schedule -->
+                  <div v-else-if="tkey === 'schedules'">
+                    <table class="tabular-table">
+                      <thead><tr><th>SSID</th><th>Attivo</th><th>Schedule On</th><th>Fascia oraria</th></tr></thead>
+                      <tbody>
+                        <tr v-for="(row, si) in (getModuleData(modName)?.schedules || [])" :key="si" v-if="row">
+                          <td>{{ row.ssid || ('SSID#' + row.ssidIndex) }}</td>
+                          <td>{{ row.wifiSsidEn ? '✓' : '✗' }}</td>
+                          <td>
+                            <label class="toggle">
+                              <input type="checkbox" :checked="row.enable">
+                              <span class="toggle-slider"></span>
+                            </label>
+                          </td>
+                          <td>
+                            <input type="text" class="edit-input"
+                                   :value="(row.scheduledList && row.scheduledList[0]) ? row.scheduledList[0].time : ''"
+                                   @input="setScheduleTime(si, 0, $event.target.value)"
+                                   placeholder="HH:MM-HH:MM" style="width:200px">
                           </td>
                         </tr>
                       </tbody>
                     </table>
-                    <div v-else class="text-muted">No data</div>
-                  </template>
+                  </div>
+
+                  <!-- EDCA Tables -->
+                  <div v-else-if="tdef.edcaKeys">
+                    <table class="tabular-table">
+                      <thead><tr><th>AC</th><th v-for="col in tdef.columns" :key="col.key">{{ col.label }}</th></tr></thead>
+                      <tbody>
+                        <tr v-for="(val, acIdx) in initEdcaVals(modName, tkey)" :key="acIdx">
+                          <td>{{ ['BE','BK','VI','VO'][acIdx] || 'AC'+acIdx }}</td>
+                          <td v-for="col in tdef.columns" :key="col.key">
+                            <input type="number" class="edit-input" style="width:70px"
+                                   v-model="editorVals[modName+'.'+tkey][acIdx][col.key.replace('ed','').toLowerCase()]">
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <!-- Generic tabular (VLAN, QoS) -->
+                  <div v-else>
+                    <table class="tabular-table">
+                      <thead><tr><th v-for="col in tdef.columns" :key="col.key">{{ col.label }}</th></tr></thead>
+                      <tbody>
+                        <tr v-for="(row, ri) in (getModuleData(modName)?.[tkey] || [])" :key="ri">
+                          <td v-for="col in tdef.columns" :key="col.key">
+                            <span v-if="col.readonly || !col.key">{{ row[col.key] }}</span>
+                            <label v-else-if="col.type === 'toggle'" class="toggle">
+                              <input type="checkbox" :checked="row[col.key] === '1' || row[col.key] === true">
+                              <span class="toggle-slider"></span>
+                            </label>
+                            <select v-else-if="col.type === 'select' && col.options" class="edit-select" style="min-width:90px">
+                              <option v-for="(lbl, opt) in col.options" :key="opt" :value="opt" :selected="row[col.key] === opt">{{ lbl }}</option>
+                            </select>
+                            <input v-else type="text" class="edit-input" style="width:130px"
+                                   :value="row[col.key] || ''" :placeholder="col.placeholder || ''">
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </template>
-            </div>
-          </div>
-        </div>
 
-        <!-- Tools -->
-        <div v-if="view === 'tools'" class="tools">
-          <div class="page-header"><h1>🔧 Tools</h1></div>
-
-          <div class="tool-card">
-            <h2>🔄 Reboot APs</h2>
-            <p class="hint">Select one or more APs to reboot. Takes 30-60 seconds per AP.</p>
-            <div class="bulk-ap-list" style="margin-bottom:12px">
-              <label v-for="ap in onlineAps" :key="ap.id" class="bulk-ap-check">
-                <input type="checkbox" :value="ap.id" v-model="rebootTargets">
-                <span class="status-dot" :class="ap.online ? 'dot-green' : 'dot-red'"></span>
-                {{ ap.name }}
-              </label>
-            </div>
-            <div class="tool-actions">
-              <button class="btn btn-danger" @click="startReboot" :disabled="rebootTargets.length === 0">
-                🔄 Reboot {{ rebootTargets.length > 0 ? rebootTargets.length + ' APs' : '' }}
-              </button>
-              <button class="btn btn-outline" @click="rebootTargets = onlineAps.map(a => a.id)">Select all</button>
-              <button class="btn btn-outline" @click="rebootTargets = []">Deselect</button>
-            </div>
-          </div>
-
-          <div class="tool-card">
-            <h2>🌐 Uplink Detection</h2>
-            <p class="hint">Each AP pings two hosts at regular intervals. If neither responds, the AP reports uplink down.</p>
-            <div class="uplink-config">
-              <div class="form-group">
-                <label>Host IP 1 (e.g. router)</label>
-                <input type="text" class="edit-input" v-model="uplinkConfig.hostIp1" placeholder="192.168.0.1">
-              </div>
-              <div class="form-group">
-                <label>Host IP 2 (e.g. public DNS)</label>
-                <input type="text" class="edit-input" v-model="uplinkConfig.hostIp2" placeholder="8.8.8.8">
-              </div>
-              <div class="form-group">
-                <label>Check interval</label>
-                <select v-model="uplinkConfig.timeInterval" class="edit-select">
-                  <option value="5">5s</option>
-                  <option value="10">10s</option>
-                  <option value="30">30s</option>
-                  <option value="60">60s</option>
-                </select>
-              </div>
-            </div>
-            <div class="bulk-ap-list" style="margin: 12px 0">
-              <label v-for="ap in onlineAps" :key="ap.id" class="bulk-ap-check">
-                <input type="checkbox" :value="ap.id" v-model="uplinkTargets">
-                <span class="status-dot" :class="ap.online ? 'dot-green' : 'dot-red'"></span>
-                {{ ap.name }}
-              </label>
-            </div>
-            <div class="tool-actions">
-              <button class="btn btn-primary" @click="applyUplink" :disabled="uplinkTargets.length === 0 || uplinkSaving">
-                <span v-if="uplinkSaving" class="spinner"></span><span v-else>🌐</span> Apply to {{ uplinkTargets.length }} AP(s)
-              </button>
-              <button class="btn btn-outline" @click="uplinkTargets = onlineAps.map(a => a.id)">All</button>
-            </div>
-            <div v-if="uplinkResults" class="cleanup-results">
-              <div v-for="(res, apId) in uplinkResults" :key="apId" class="bulk-result-item" :class="res.success ? 'result-ok' : 'result-err'">
-                <strong>{{ getApName(apId) }}</strong>: {{ res.success ? '✅ OK' : '❌ ' + res.error }}
+                <button v-if="modName === 'qvlanGet'" class="btn btn-sm btn-primary" style="margin-top:10px" @click="saveVlanTable">💾 Salva VLAN</button>
+                <button v-if="modName === 'qosManageGet'" class="btn btn-sm btn-primary" style="margin-top:10px" @click="saveQosTable">💾 Salva Traffic Control</button>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Compare -->
-        <div v-if="view === 'compare'" class="compare">
-          <div class="page-header"><h1>Compare APs</h1></div>
-          <div class="compare-select">
-            <div class="form-group">
-              <label>AP 1</label>
-              <select v-model="compareLeft">
-                <option value="">— Select —</option>
-                <option v-for="ap in onlineAps" :key="ap.id" :value="ap.id">{{ ap.name }} ({{ ap.ip }})</option>
-              </select>
-            </div>
-            <div class="compare-arrow">⇄</div>
-            <div class="form-group">
-              <label>AP 2</label>
-              <select v-model="compareRight">
-                <option value="">— Select —</option>
-                <option v-for="ap in onlineAps" :key="ap.id" :value="ap.id">{{ ap.name }} ({{ ap.ip }})</option>
-              </select>
-            </div>
-            <button class="btn btn-primary" @click="runCompare" :disabled="!compareLeft || !compareRight || compareLoading">
-              <span v-if="compareLoading" class="spinner"></span> Compare
-            </button>
-          </div>
-          <div v-if="compareLoading" class="loading-state"><div class="spinner-lg"></div><p>Comparing...</p></div>
-          <div v-if="compareResult && !compareLoading" class="compare-result">
-            <div class="compare-summary">
-              <span class="badge badge-same">{{ compareResult.summary.same }} identical</span>
-              <span class="badge badge-diff" v-if="compareResult.summary.diff">{{ compareResult.summary.diff }} different</span>
-              <span class="badge badge-left" v-if="compareResult.summary.left_only">{{ compareResult.summary.left_only }} only {{ compareResult.left.name }}</span>
-              <span class="badge badge-right" v-if="compareResult.summary.right_only">{{ compareResult.summary.right_only }} only {{ compareResult.right.name }}</span>
-            </div>
-            <div v-if="compareResult.summary.diff === 0 && compareResult.summary.left_only === 0 && compareResult.summary.right_only === 0" class="compare-match">✅ Configuration identical</div>
-            <div v-for="(items, cat) in compareResult.grouped" :key="cat" class="compare-category">
-              <h2>{{ categoryLabel(cat) }}</h2>
-              <table class="compare-table">
-                <thead><tr><th>Parameter</th><th>{{ compareResult.left.name }}</th><th>{{ compareResult.right.name }}</th></tr></thead>
-                <tbody>
-                  <tr v-for="item in items" :key="item.key" :class="'diff-' + item.status">
-                    <td>{{ item.label }}</td>
-                    <td>{{ formatValue(item.left) }}</td>
-                    <td>{{ formatValue(item.right) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <!-- Bulk Edit -->
-        <div v-if="view === 'bulk'" class="bulk">
-          <div class="page-header">
-            <h1>Bulk Edit</h1>
-            <p class="subtitle">Apply the same configuration to multiple APs at once</p>
-          </div>
-          <div class="bulk-panel">
-            <div class="bulk-step cleanup-card">
-              <h2>🧹 Cleanup Unused SSIDs</h2>
-              <p class="hint">Disable and rename to "-" all SSIDs #2–#8 (both 2.4G and 5G) on all online APs. SSID #1 is not affected.</p>
-              <button class="btn btn-warning" @click="cleanupSsids" :disabled="cleaning">
-                <span v-if="cleaning" class="spinner"></span><span v-else>🧹</span> Cleanup all online APs
-              </button>
-              <div v-if="cleanupResults" class="cleanup-results">
-                <div v-for="(res, apId) in cleanupResults" :key="apId" class="bulk-result-item" :class="res.success ? 'result-ok' : 'result-err'">
-                  <strong>{{ getApName(apId) }}</strong>: {{ res.success ? `✅ ${res.count} SSIDs cleaned` : '❌ ' + res.error }}
-                </div>
-              </div>
-            </div>
-
-            <hr class="bulk-divider">
-
-            <div class="bulk-step">
-              <h2>1. Select target APs</h2>
-              <div class="bulk-ap-list">
-                <label v-for="ap in onlineAps" :key="ap.id" class="bulk-ap-check">
-                  <input type="checkbox" :value="ap.id" v-model="bulkTargets">
-                  <span class="status-dot" :class="ap.online ? 'dot-green' : 'dot-red'"></span>
-                  {{ ap.name }} ({{ ap.ip }})
-                </label>
-              </div>
-            </div>
-            <div class="bulk-step">
-              <h2>2. Select source AP</h2>
-              <p class="hint">Choose an AP to copy Wi-Fi config from (SSID + security + radio)</p>
-              <select v-model="bulkSource" class="edit-select" style="min-width:220px">
-                <option value="">— Select source —</option>
-                <option v-for="ap in onlineAps" :key="ap.id" :value="ap.id">{{ ap.name }} ({{ ap.ip }})</option>
-              </select>
-            </div>
-            <div class="bulk-step" v-if="bulkSourceData">
-              <h2>3. Config to apply</h2>
-              <div class="bulk-preview">
-                <div v-for="radio in ['2.4G', '5G']" :key="radio" class="bulk-radio-section">
-                  <h3>{{ radio }}</h3>
-                  <table class="config-table">
-                    <tbody>
-                      <tr><td class="param-name">Channel</td><td class="param-value">{{ bulkSourceData.radio[radio]?.channel || 'auto' }}</td></tr>
-                      <tr><td class="param-name">Bandwidth</td><td class="param-value">{{ bulkSourceData.radio[radio]?.bandwidth || '—' }} MHz</td></tr>
-                      <tr><td class="param-name">Power</td><td class="param-value">{{ bulkSourceData.radio[radio]?.currentPower || '—' }} dBm</td></tr>
-                      <tr><td class="param-name">SSID</td><td class="param-value">{{ bulkSourceData.ssid[radio]?.ssid || '—' }}</td></tr>
-                      <tr><td class="param-name">Security</td><td class="param-value">{{ bulkSourceData.sec[radio]?.secType || '—' }}</td></tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-            <div class="bulk-step">
-              <h2>4. Apply</h2>
-              <button class="btn btn-primary" @click="applyBulk" :disabled="bulkTargets.length === 0 || !bulkSource || bulkSaving">
-                <span v-if="bulkSaving" class="spinner"></span><span v-else>⚡</span>
-                Apply to {{ bulkTargets.length }} AP(s)
-              </button>
-            </div>
-            <div v-if="bulkResults" class="bulk-results">
-              <h2>Results</h2>
-              <div v-for="(res, apId) in bulkResults" :key="apId" class="bulk-result-item" :class="res.success ? 'result-ok' : 'result-err'">
-                <strong>{{ getApName(apId) }}</strong>: {{ res.success ? '✅ OK' : '❌ ' + res.error }}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Firmware -->
-        <div v-if="view === 'firmware'" class="firmware">
-          <div class="page-header">
-            <h1>📦 Firmware Upgrade</h1>
-            <p class="subtitle">Manage firmware for all Access Points</p>
-          </div>
-
-          <div class="tool-card">
-            <h2>📋 Installed Versions</h2>
-            <div class="firmware-actions-bar">
-              <button class="btn btn-outline btn-sm" @click="loadFirmwareInfo" :disabled="fwLoading">
-                <span v-if="fwLoading" class="spinner"></span><span v-else>↻</span> Refresh
-              </button>
-              <button class="btn btn-outline btn-sm" @click="checkAllOnline" :disabled="fwOnlineCheck">
-                🌐 Check for updates
-              </button>
-            </div>
-            <table class="config-table firmware-table" v-if="fwInfo.length">
-              <thead><tr>
-                <th>AP</th><th>IP</th><th>Model</th><th>Firmware</th><th>Date</th><th>Online</th><th>Actions</th>
-              </tr></thead>
-              <tbody>
-                <tr v-for="f in fwInfo" :key="f.id">
-                  <td><strong>{{ f.name }}</strong></td>
-                  <td>{{ f.ip }}</td>
-                  <td>{{ f.model }}</td>
-                  <td :class="f.online ? '' : 'text-muted'">{{ f.firmware || '—' }}</td>
-                  <td>{{ f.firmwareDate || '—' }}</td>
-                  <td>
-                    <span v-if="f.onlineCheckStatus === undefined" class="text-muted">—</span>
-                    <span v-else-if="f.onlineCheckStatus === 0">🔄 Checking...</span>
-                    <span v-else-if="f.onlineCheckStatus === 1" class="text-yes">✅ Up to date</span>
-                    <span v-else-if="f.onlineCheckStatus === 2" class="text-info">⬆️ {{ f.onlineNewVersion }}</span>
-                    <span v-else-if="f.onlineCheckStatus === 5" class="text-error">❌ Server error</span>
-                    <span v-else class="text-muted">?</span>
-                  </td>
-                  <td>
-                    <label v-if="f.online" class="btn btn-outline btn-sm firmware-upload-label">
-                      📁 Upload
-                      <input type="file" accept=".bin" class="firmware-file-input" @change="uploadSingleFirmware(f.id, $event)">
-                    </label>
-                    <button v-if="f.onlineCheckStatus === 2" class="btn btn-primary btn-sm" @click="startOnlineUpgrade(f.id)" :disabled="f.upgrading">
-                      ⬆️ Upgrade
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-else-if="fwLoading" class="loading-state"><div class="spinner-lg"></div><p>Loading firmware info...</p></div>
-            <div v-else class="text-muted">Click "Refresh" to load firmware information.</div>
-          </div>
-
-          <div class="tool-card">
-            <h2>🚀 Batch Upload</h2>
-            <p class="hint">Upload the same .bin firmware to multiple APs (sequential, one at a time).</p>
-            <div class="bulk-ap-list" style="margin: 12px 0">
-              <label v-for="ap in onlineAps" :key="ap.id" class="bulk-ap-check">
-                <input type="checkbox" :value="ap.id" v-model="fwBatchTargets">
-                <span class="status-dot" :class="ap.online ? 'dot-green' : 'dot-red'"></span>
-                {{ ap.name }} ({{ ap.model }})
-              </label>
-            </div>
-            <div class="tool-actions">
-              <label class="btn btn-primary" :class="{ 'btn-disabled': fwBatchTargets.length === 0 || fwBatchUploading }">
-                <span v-if="fwBatchUploading" class="spinner"></span><span v-else>📦</span>
-                Upload to {{ fwBatchTargets.length }} AP(s)
-                <input type="file" accept=".bin" class="firmware-file-input" :disabled="fwBatchTargets.length === 0" @change="uploadBatchFirmware($event)">
-              </label>
-              <button class="btn btn-outline" @click="fwBatchTargets = onlineAps.map(a => a.id)">All</button>
-              <button class="btn btn-outline" @click="fwBatchTargets = []">None</button>
-            </div>
-            <div v-if="fwBatchResults" class="cleanup-results" style="margin-top:12px">
-              <div v-for="(res, apId) in fwBatchResults" :key="apId" class="bulk-result-item" :class="res.success ? 'result-ok' : 'result-err'">
-                <strong>{{ getApName(apId) }}</strong>: {{ res.success ? '✅ ' + res.message : '❌ ' + (res.error || res.message) }}
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </main>
+        <div v-if="!snapshot && loading" class="loading-state"><div class="spinner-lg"></div><p>Caricamento configurazione...</p></div>
+      </div>
     </div>
 
-    <!-- ── SETTINGS MODAL ── -->
-    <div v-if="showSettings" class="modal-overlay" @click.self="showSettings = false">
-      <div class="modal modal-lg">
-        <h2>⚙️ Settings</h2>
-
-        <div class="settings-section">
-          <h3>Access Points</h3>
-          <div v-for="(ap, i) in settingsAps" :key="i" class="settings-ap-row">
-            <input type="text" v-model="ap.name" class="edit-input" style="width:140px" placeholder="Name">
-            <input type="text" v-model="ap.ip" class="edit-input" style="width:130px" placeholder="IP">
-            <select v-model="ap.model" class="edit-select" style="width:120px">
-              <option value="i27V1.1">i27</option>
-              <option value="OAP1200V2.0">OAP1200</option>
-            </select>
-            <input type="text" v-model="ap.location" class="edit-input" style="width:120px" placeholder="Location">
-            <button class="btn btn-outline btn-sm" @click="removeSettingsAp(i)" style="color:var(--red)">✕</button>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <h3>Add AP</h3>
-          <div class="settings-ap-row">
-            <button class="btn btn-outline btn-sm" @click="settingsDiscover" :disabled="settingsDiscovering">
-              <span v-if="settingsDiscovering" class="spinner"></span><span v-else>🔍</span> Scan network
-            </button>
-            <button class="btn btn-outline btn-sm" @click="settingsAdding = !settingsAdding">+ Manual</button>
-          </div>
-
-          <div v-if="settingsDiscovered.length > 0" class="settings-discovered">
-            <div v-for="ap in settingsDiscovered" :key="ap.ip" class="settings-ap-row">
-              <span>{{ ap.ip }}</span>
-              <span class="text-muted">{{ ap.model }}</span>
-              <button class="btn btn-primary btn-sm" @click="addDiscoveredAp(ap)">+ Add</button>
-            </div>
-          </div>
-
-          <div v-if="settingsAdding" class="settings-ap-row" style="margin-top:8px">
-            <input type="text" v-model="settingsNewAp.name" class="edit-input" style="width:120px" placeholder="Name">
-            <input type="text" v-model="settingsNewAp.ip" class="edit-input" style="width:120px" placeholder="IP">
-            <select v-model="settingsNewAp.model" class="edit-select" style="width:120px">
-              <option value="i27V1.1">i27</option>
-              <option value="OAP1200V2.0">OAP1200</option>
-            </select>
-            <button class="btn btn-primary btn-sm" @click="addManualSettingsAp">Add</button>
-          </div>
-        </div>
-
-        <div class="settings-section">
-          <h3>Password</h3>
-          <p class="hint">Set via <code>TENDA_PASSWORD</code> environment variable. Restart required after change.</p>
-        </div>
-
-        <div class="modal-actions">
-          <button class="btn btn-outline" @click="showSettings = false">Cancel</button>
-          <button class="btn btn-primary" @click="saveSettings" :disabled="settingsSaving">
-            <span v-if="settingsSaving" class="spinner"></span> Save
-          </button>
+    <!-- ═══════ COMPARE ═══════ -->
+    <div v-if="mainView === 'compare'" class="compare">
+      <div class="page-header"><h1>⇄ Confronta AP</h1></div>
+      <div class="compare-select" style="display:flex;gap:12px;align-items:center;padding:16px">
+        <select v-model="compareLeft" class="edit-select" style="min-width:150px">
+          <option value="">— AP 1 —</option>
+          <option v-for="ap in onlineAps" :key="ap.id" :value="ap.id">{{ ap.name }}</option>
+        </select>
+        <span style="font-size:20px;color:#888">vs</span>
+        <select v-model="compareRight" class="edit-select" style="min-width:150px">
+          <option value="">— AP 2 —</option>
+          <option v-for="ap in onlineAps" :key="ap.id" :value="ap.id">{{ ap.name }}</option>
+        </select>
+        <button class="btn btn-primary" @click="runCompare" :disabled="!compareLeft || !compareRight || compareLoading">
+          <span v-if="compareLoading" class="spinner"></span> Confronta
+        </button>
+      </div>
+      <div v-if="compareLoading" class="loading-state"><div class="spinner-lg"></div></div>
+      <div v-if="compareResult" class="compare-result" style="padding:16px">
+        <div v-for="(items, cat) in compareResult.grouped || {}" :key="cat" style="margin-top:16px">
+          <h2 style="margin-bottom:8px;color:#aaa;text-transform:uppercase;font-size:13px">{{ cat }}</h2>
+          <table class="config-table">
+            <thead><tr><th>Parametro</th><th>{{ compareResult.left?.name }}</th><th>{{ compareResult.right?.name }}</th></tr></thead>
+            <tbody>
+              <tr v-for="item in items" :key="item.key">
+                <td>{{ item.label }}</td>
+                <td :class="{ 'text-error': item.left !== item.right }">{{ formatCompareVal(item.left) }}</td>
+                <td :class="{ 'text-error': item.left !== item.right }">{{ formatCompareVal(item.right) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
 
-    <!-- Reboot confirmation modal -->
-    <div v-if="rebootModal" class="modal-overlay" @click.self="rebootModal = false">
-      <div class="modal">
-        <h2>⚠️ Confirm Reboot</h2>
-        <p>You are about to reboot <strong>{{ rebootTargets.length > 1 ? rebootTargets.length + ' APs' : getApName(rebootTargets[0]) }}</strong>.</p>
-        <p class="text-muted">APs will be offline for ~30-60 seconds.</p>
-        <div class="modal-actions">
-          <button class="btn btn-outline" @click="rebootModal = false">Cancel</button>
-          <button class="btn btn-danger" @click="confirmReboot" :disabled="rebooting">
-            <span v-if="rebooting" class="spinner"></span><span v-else>🔄</span> Reboot
-          </button>
+    <!-- ═══════ BULK ═══════ -->
+    <div v-if="mainView === 'bulk'" class="bulk">
+      <div class="page-header"><h1>⚡ Modifica multipla</h1></div>
+      <div class="tool-card">
+        <h2>🧹 Pulizia SSID inutilizzati</h2>
+        <p class="hint" style="color:#888;margin:4px 0 10px">Disabilita e rinomina a "-" tutti gli SSID #2–#8 (2.4G + 5G) su tutti gli AP online. SSID #1 invariato.</p>
+        <button class="btn btn-warning" @click="cleanupSsids" :disabled="cleaning">
+          <span v-if="cleaning" class="spinner"></span><span v-else>🧹</span> Pulisci tutti
+        </button>
+        <div v-if="cleanupResults" style="margin-top:10px">
+          <div v-for="(res, id) in cleanupResults" :key="id" :class="res.success ? 'text-yes' : 'text-error'">
+            {{ getApName(id) }}: {{ res.success ? '✅ ' + (res.count || 'OK') : '❌ ' + res.error }}
+          </div>
         </div>
-        <div v-if="rebootResults" class="modal-results">
-          <div v-for="(res, apId) in rebootResults" :key="apId" class="bulk-result-item" :class="res.success ? 'result-ok' : 'result-err'">
-            <strong>{{ getApName(apId) }}</strong>: {{ res.success ? '🔄 Rebooted' : '❌ ' + res.error }}
+      </div>
+      <div class="tool-card" style="margin-top:16px">
+        <h2>📋 Copia config da sorgente</h2>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <select v-model="bulkSource" class="edit-select" style="min-width:150px" @change="onBulkSourceChange">
+            <option value="">— AP sorgente —</option>
+            <option v-for="ap in onlineAps" :key="ap.id" :value="ap.id">{{ ap.name }}</option>
+          </select>
+          <span style="font-size:18px">→</span>
+          <div class="bulk-ap-list">
+            <label v-for="ap in aps" :key="ap.id" class="bulk-ap-check">
+              <input type="checkbox" :value="ap.id" v-model="bulkTargets"> {{ ap.name }}
+            </label>
+          </div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:10px" @click="showBulkModal = true" :disabled="!bulkSource || bulkTargets.length === 0">
+          ⚡ Scegli moduli da copiare su {{ bulkTargets.length }} AP
+        </button>
+        <div v-if="bulkResults" style="margin-top:10px">
+          <div v-for="(res, id) in bulkResults" :key="id" :class="res.success ? 'text-yes' : 'text-error'">
+            {{ getApName(id) }}: {{ res.success ? '✅' : '❌ ' + res.error }}
           </div>
         </div>
       </div>
     </div>
-    </template>
 
-    <div class="toast-container">
-      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.type">{{ t.message }}</div>
+    <!-- ═══════ TOOLS ═══════ -->
+    <div v-if="mainView === 'tools'" class="tools">
+      <div class="page-header"><h1>🔧 Strumenti</h1></div>
+
+      <div class="tool-card">
+        <h2>🔄 Riavvio AP</h2>
+        <p class="hint" style="color:#888;margin:4px 0 10px">Seleziona uno o più AP da riavviare. L'operazione richiede 30-60 secondi per AP.</p>
+        <div class="bulk-ap-list" style="margin-bottom:10px">
+          <label v-for="ap in onlineAps" :key="ap.id" class="bulk-ap-check">
+            <input type="checkbox" :value="ap.id" v-model="rebootTargets">
+            <span class="status-dot" :class="ap.online ? 'dot-green' : 'dot-red'"></span>
+            {{ ap.name }} ({{ ap.ip }})
+          </label>
+        </div>
+        <div class="tool-actions" style="display:flex;gap:8px">
+          <button class="btn btn-danger" @click="startReboot" :disabled="rebootTargets.length === 0">
+            🔄 Riavvia {{ rebootTargets.length > 0 ? rebootTargets.length + ' AP' : '' }}
+          </button>
+          <button class="btn btn-outline" @click="rebootTargets = onlineAps.map(a => a.id)">Tutti</button>
+          <button class="btn btn-outline" @click="rebootTargets = []">Nessuno</button>
+        </div>
+      </div>
+
+      <div class="tool-card" style="margin-top:16px">
+        <h2>🌐 Uplink Detection</h2>
+        <p class="hint" style="color:#888;margin:4px 0 10px">L'AP pinga due host a intervalli regolari. Se entrambi non rispondono, l'AP considera l'uplink down.</p>
+        <div class="form-grid">
+          <div class="form-field"><label>Host IP 1 (es. router)</label><input type="text" class="edit-input" v-model="uplinkConfig.hostIp1" placeholder="192.168.0.10"></div>
+          <div class="form-field"><label>Host IP 2 (es. DNS pubblico)</label><input type="text" class="edit-input" v-model="uplinkConfig.hostIp2" placeholder="8.8.8.8"></div>
+          <div class="form-field">
+            <label>Intervallo (secondi)</label>
+            <select v-model="uplinkConfig.timeInterval" class="edit-select">
+              <option value="5">5s</option><option value="10">10s</option><option value="30">30s</option><option value="60">60s</option>
+            </select>
+          </div>
+        </div>
+        <div class="bulk-ap-list" style="margin:10px 0">
+          <label v-for="ap in onlineAps" :key="ap.id" class="bulk-ap-check">
+            <input type="checkbox" :value="ap.id" v-model="uplinkTargets"> {{ ap.name }}
+          </label>
+        </div>
+        <button class="btn btn-primary" @click="applyUplink" :disabled="uplinkTargets.length === 0 || uplinkSaving">
+          <span v-if="uplinkSaving" class="spinner"></span><span v-else>🌐</span> Attiva su {{ uplinkTargets.length }} AP
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══════ FIRMWARE ═══════ -->
+<div v-if="mainView === 'firmware'" class="firmware">
+      <div class="page-header"><h1>📦 Firmware</h1></div>
+
+      <div class="tool-card">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+          <button class="btn btn-outline btn-sm" @click="loadFirmwareInfo" :disabled="fwLoading">
+            <span v-if="fwLoading" class="spinner"></span><span v-else>↻</span> Aggiorna
+          </button>
+          <button class="btn btn-outline btn-sm" @click="checkOnlineAll" :disabled="fwOnlineCheck">
+            <span v-if="fwOnlineCheck" class="spinner"></span><span v-else>🌐</span> Controlla online
+          </button>
+          <span v-if="lastOnlineCheck" style="color:#666;font-size:11px">Ultimo: {{ lastOnlineCheck }}</span>
+        </div>
+        <table v-if="fwInfo.length" class="config-table">
+          <thead><tr><th style="width:30px"></th><th>AP</th><th>Versione</th><th>Stato online</th><th style="width:120px"></th></tr></thead>
+          <tbody>
+            <tr v-for="f in fwInfo" :key="f.id">
+              <td><input type="checkbox" v-model="fwBatchTargets" :value="f.id"></td>
+              <td>{{ f.name }} <span style="color:#666;font-size:11px">{{ f.model }}</span></td>
+              <td>{{ f.firmware || '—' }}</td>
+              <td>
+                <span v-if="f.onlineStatus == null" style="color:#666">—</span>
+                <span v-else-if="f.onlineStatus === 1" style="color:var(--green)">✅ Aggiornato</span>
+                <span v-else-if="f.onlineStatus === 2" style="color:var(--yellow)">
+                  ⬆ {{ f.newVersion }}
+                </span>
+                <span v-else-if="f.onlineStatus === 5" style="color:var(--red)">Server non raggiungibile</span>
+                <span v-else style="color:#888">🔍 Controllo...</span>
+              </td>
+              <td>
+                <button v-if="f.onlineStatus === 2" class="btn btn-primary btn-sm" @click="startOnlineUpgrade(f.id)" :disabled="f.upgrading">
+                  <span v-if="f.upgrading" class="spinner"></span>
+                  <span v-else>⬆</span> Aggiorna
+                </button>
+                <span v-if="f.upgradeDone" style="color:var(--green);font-size:11px">Avviato ✓</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="tool-card" style="margin-top:12px">
+        <h3>📁 Upload file firmware (.bin)</h3>
+        <p style="color:#888;font-size:12px">Scarica il .bin dal sito Tenda. Seleziona gli AP target qui sopra.</p>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <input type="file" accept=".bin" @change="onFwFileSelected" ref="fwFileInput" style="color:#ccc">
+          <button class="btn btn-primary btn-sm" @click="uploadBatchFirmware" :disabled="!fwFile || !fwBatchTargets.length || fwBatchUploading">
+            <span v-if="fwBatchUploading" class="spinner"></span>
+            <span v-else>⬆</span> Upload su {{ fwBatchTargets.length }} AP
+          </button>
+        </div>
+        <div v-if="fwBatchResults" style="margin-top:8px">
+          <div v-for="(r, id) in fwBatchResults" :key="id" :style="{color: r.success ? 'var(--green)' : 'var(--red)'}">
+            {{ getApName(id) }}: {{ r.success ? '✓ OK — riavvio...' : '✗ ' + (r.error || r.message) }}
+          </div>
+        </div>
+      </div>
+<!-- Password Modal -->
+<div v-if="passwordModal.show" class="modal-overlay" @click.self="cancelPassword">
+  <div class="modal modal-sm">
+    <h3>🔒 Password Admin Richiesta</h3>
+    <p style="margin-top:6px;color:#999">{{ fieldDefs?.fields?.[passwordModal.moduleKey]?.label || passwordModal.moduleKey }}</p>
+    <input type="password" v-model="passwordModal.pwd" class="edit-input" placeholder="Password admin AP" style="width:100%;margin:10px 0">
+    <div class="modal-actions">
+      <button class="btn btn-outline" @click="cancelPassword">Annulla</button>
+      <button class="btn btn-primary" @click="confirmPassword" :disabled="!passwordModal.pwd">Conferma</button>
     </div>
   </div>
+</div>
 
-  <script src="/js/vue.prod.js"></script>
-  <script src="/js/app.js"></script>
+<!-- Bulk Select Modal -->
+<div v-if="showBulkModal" class="modal-overlay">
+  <div class="modal modal-lg">
+    <h3>📋 Scegli cosa copiare</h3>
+    <p style="color:#888;font-size:12px;margin-top:4px">
+      Da <strong>{{ getApName(bulkSource) }}</strong> → {{ bulkTargets.length }} AP dello stesso modello.
+    </p>
+    <div style="max-height:55vh;overflow-y:auto;margin:8px 0;font-size:13px">
+      <template v-for="group in bulkGroups" :key="group.cat">
+        <div style="color:var(--accent);font-size:11px;text-transform:uppercase;margin:10px 0 4px;letter-spacing:1px;border-bottom:1px solid var(--border);padding-bottom:2px">
+          {{ group.label }}
+        </div>
+        <label v-for="mod in group.items" :key="mod.key" style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 8px;cursor:pointer">
+          <input type="checkbox" v-model="mod.checked" :disabled="mod.unique">
+          <span :style="{color: mod.unique ? '#666' : '#ccc'}">{{ mod.desc }}</span>
+          <span v-if="mod.unique" style="color:var(--yellow);font-size:10px;margin-left:4px">⚠ univoco</span>
+        </label>
+      </template>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <button class="btn btn-sm btn-outline" @click="checkAllBulk(true)">Seleziona tutto</button>
+      <button class="btn btn-sm btn-outline" @click="checkAllBulk(false)">Deseleziona tutto</button>
+    </div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn btn-outline" @click="showBulkModal = false">Annulla</button>
+      <button class="btn btn-primary" @click="applyBulkSelected" :disabled="bulkSaving">
+        <span v-if="bulkSaving" class="spinner"></span>
+        <span v-else>⚡</span> Copia {{ bulkSelectedCount }} impostazioni
+      </button>
+    </div>
+    <div v-if="bulkResults" style="margin-top:10px">
+      <div v-for="(res, id) in bulkResults" :key="id" :class="res.success ? 'text-yes' : 'text-error'">
+        {{ getApName(id) }}: {{ res.success ? '✅' : '❌ ' + res.error }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reboot Modal -->
+<div v-if="rebootModal" class="modal-overlay" @click.self="rebootModal = false">
+  <div class="modal">
+    <h3>⚠️ Conferma riavvio</h3>
+    <p style="margin-top:6px;color:#aaa">Stai per riavviare <strong>{{ rebootTargets.length > 1 ? rebootTargets.length + ' AP' : getApName(rebootTargets[0]) }}</strong>.</p>
+    <p style="color:#888;font-size:12px">Gli AP saranno offline per circa 30-60 secondi.</p>
+    <div class="modal-actions">
+      <button class="btn btn-outline" @click="rebootModal = false">Annulla</button>
+      <button class="btn btn-danger" @click="confirmReboot" :disabled="rebooting">
+        <span v-if="rebooting" class="spinner"></span><span v-else>🔄</span> Riavvia
+      </button>
+    </div>
+    <div v-if="rebootResults" style="margin-top:10px">
+      <div v-for="(res, id) in rebootResults" :key="id" :class="res.success ? 'text-yes' : 'text-error'">
+        {{ getApName(id) }}: {{ res.success ? '✅ Riavviato' : '❌ ' + res.error }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast-container">
+  <div v-if="msg" class="toast toast-ok" @click="msg = ''">{{ msg }}</div>
+  <div v-if="error" class="toast toast-error" @click="error = ''">{{ error }}</div>
+</div>
+</template>
+</script>
+
+<script src="/js/vue.prod.js?v=20260712"></script>
+<script src="/js/app.js?v=20260714b"></script>
 </body>
 </html>

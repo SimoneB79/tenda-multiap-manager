@@ -7,6 +7,7 @@ const path = require('path');
 const mqtt = require('mqtt');
 const TendaClient = require('./lib/tenda');
 const { getModuleDef } = require('./lib/modules');
+const { getFieldDefs } = require('./lib/fields');
 const { diffSnapshots, groupByCategory, diffSummary } = require('./lib/diff');
 
 const multer = require('multer');
@@ -26,15 +27,13 @@ function loadConfig() {
   }
 }
 
-function saveConfig(config) {
-  const dir = path.dirname(CONFIG_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-}
-
 function isSetupComplete() {
   const config = loadConfig();
   return config.aps && config.aps.length > 0;
+}
+
+function saveConfig(config) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
 function getPassword() {
@@ -46,7 +45,26 @@ function getPassword() {
 const clients = new Map(); // id → TendaClient
 
 function getClient(id) {
-  if (clients.has(id)) return clients.get(id);
+  if (clients.has(id)) {
+    const c = clients.get(id);
+    if (c._stale) { clients.delete(id); }
+    else return c;
+  }
+  return _createClient(id);
+}
+
+/** Always create a fresh ephemeral client (for REST API — never stored in pool, avoids conflicts with MQTT poller). */
+function getFreshClient(id) {
+  const config = loadConfig();
+  const ap = config.aps.find(a => a.id === id);
+  if (!ap) return null;
+  if (ap.enabled === false) return null;
+  const client = new TendaClient(ap.ip, getPassword(), { model: ap.model, location: ap.location });
+  client._meta = { id: ap.id, name: ap.name, location: ap.location };
+  return client; // NOT stored in clients Map — truly ephemeral
+}
+
+function _createClient(id) {
   const config = loadConfig();
   const ap = config.aps.find(a => a.id === id);
   if (!ap) return null;
@@ -58,32 +76,39 @@ function getClient(id) {
 }
 
 function refreshClients() {
-  clients.clear();
+  // Mark all cached clients as stale so getClient() recreates them
+  for (const c of clients.values()) c._stale = true;
 }
 
 // ── Middleware ───────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
-app.use('/js', express.static(path.join(__dirname, 'public', 'js'), { maxAge: '1d' }));
-app.use('/css', express.static(path.join(__dirname, 'public', 'css'), { maxAge: '1d' }));
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0 }));
+
+// Serve index.html with no-cache headers to prevent proxy/reverse-proxy caching
+app.get('/', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.use('/js', express.static(path.join(__dirname, 'public', 'js'), { maxAge: 0, setHeaders: (res) => { res.set('Cache-Control', 'no-cache'); } }));
+app.use('/css', express.static(path.join(__dirname, 'public', 'css'), { maxAge: 0, setHeaders: (res) => { res.set('Cache-Control', 'no-cache'); } }));
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0, setHeaders: (res, filePath) => { if (!filePath.endsWith('.html')) res.set('Cache-Control', 'no-cache'); } }));
 
 // ── Setup / Discovery API ───────────────────────────────
 
-// Check if setup is needed
 app.get('/api/setup/status', (_req, res) => {
   res.json({ setupComplete: isSetupComplete() });
 });
 
 // Scan subnet for Tenda APs
 app.post('/api/setup/discover', async (req, res) => {
-  const { subnet } = req.body; // e.g. "192.168.0"
+  const { subnet } = req.body;
   if (!subnet || !/^\d+\.\d+\.\d+$/.test(subnet)) {
     return res.status(400).json({ error: 'Invalid subnet. Use format: 192.168.0' });
   }
-
   const found = [];
   const promises = [];
-
   for (let i = 1; i <= 254; i++) {
     const ip = `${subnet}.${i}`;
     promises.push(
@@ -94,80 +119,54 @@ app.post('/api/setup/discover', async (req, res) => {
           if (identity.model) {
             found.push({ ip, model: identity.model, firmware: identity.firmware || null });
           }
-        } catch {
-          // Not a Tenda AP — skip
-        }
+        } catch { /* Not a Tenda AP */ }
       })()
     );
   }
-
-  // Run all scans with a global timeout
   await Promise.race([
     Promise.allSettled(promises),
-    new Promise(resolve => setTimeout(resolve, 15000)), // 15s max
+    new Promise(resolve => setTimeout(resolve, 15000)),
   ]);
-
-  // Sort by IP
   found.sort((a, b) => {
     const na = a.ip.split('.').map(Number);
     const nb = b.ip.split('.').map(Number);
-    for (let i = 0; i < 4; i++) {
-      if (na[i] !== nb[i]) return na[i] - nb[i];
-    }
+    for (let i = 0; i < 4; i++) { if (na[i] !== nb[i]) return na[i] - nb[i]; }
     return 0;
   });
-
   res.json({ found });
 });
 
 // Test connection to an AP with a password
 app.post('/api/setup/test', async (req, res) => {
   const { ip, password } = req.body;
-  if (!ip || !password) {
-    return res.status(400).json({ error: 'IP and password are required' });
-  }
-
+  if (!ip || !password) return res.status(400).json({ error: 'IP and password are required' });
   try {
     const client = new TendaClient(ip, password);
     const identity = await client.fetchIdentity();
     if (!identity.model) {
       return res.json({ success: false, error: 'No Tenda AP detected at this address' });
     }
-    // Try login
-    const loginResult = await client.login();
-    res.json({
-      success: true,
-      model: identity.model,
-      firmware: identity.firmware,
-      firmwareDate: identity.firmwareDate,
-    });
+    await client.login();
+    res.json({ success: true, model: identity.model, firmware: identity.firmware, firmwareDate: identity.firmwareDate });
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
 });
 
-// Save setup configuration (APs + optional password env var name)
+// Save setup configuration
 app.post('/api/setup/save', (req, res) => {
   const { aps, password_env } = req.body;
-  if (!aps || !aps.length) {
-    return res.status(400).json({ error: 'At least one AP is required' });
-  }
-
-  // Validate APs
+  if (!aps || !aps.length) return res.status(400).json({ error: 'At least one AP is required' });
   for (const ap of aps) {
-    if (!ap.id || !ap.name || !ap.ip) {
-      return res.status(400).json({ error: 'Each AP needs id, name, and ip' });
-    }
+    if (!ap.id || !ap.name || !ap.ip) return res.status(400).json({ error: 'Each AP needs id, name, and ip' });
     if (!ap.model) ap.model = 'i27V1.1';
     if (!ap.location) ap.location = '';
   }
-
   const config = {
     password_env: password_env || 'TENDA_PASSWORD',
     refresh_interval_ms: 30000,
     aps,
   };
-
   saveConfig(config);
   refreshClients();
   res.json({ success: true });
@@ -178,18 +177,16 @@ app.post('/api/setup/save', (req, res) => {
 // Health check
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
-// List APs with status
+// List APs with status (parallel pings)
 app.get('/api/aps', async (_req, res) => {
   const config = loadConfig();
   const password = getPassword();
-  const results = [];
 
-  for (const ap of config.aps) {
+  const promises = config.aps.map(async (ap) => {
     const entry = { ...ap, online: false, model: ap.model, firmware: null, error: null };
     if (ap.enabled === false) {
       entry.error = 'Disabled';
-      results.push(entry);
-      continue;
+      return entry;
     }
     try {
       const client = new TendaClient(ap.ip, password, { model: ap.model, location: ap.location });
@@ -199,19 +196,21 @@ app.get('/api/aps', async (_req, res) => {
       entry.firmware = ping.firmware;
       entry.firmwareDate = ping.firmwareDate;
       entry.error = ping.error || null;
-      client._meta = { id: ap.id, name: ap.name, location: ap.location };
-      clients.set(ap.id, client);
+      // DO NOT cache the ping client — avoid session conflicts with snapshot queries
+      // getClient() will create a fresh client when needed
+      refreshClients(); // invalidate any cached clients so snapshot creates fresh session
     } catch (err) {
       entry.error = err.message;
     }
-    results.push(entry);
-  }
+    return entry;
+  });
+  const results = await Promise.all(promises);
   res.json(results);
 });
 
 // Get AP config snapshot
 app.get('/api/aps/:id/snapshot', async (req, res) => {
-  const client = getClient(req.params.id);
+  const client = getFreshClient(req.params.id);
   if (!client) return res.status(404).json({ error: 'AP not found or disabled' });
 
   try {
@@ -236,8 +235,8 @@ app.get('/api/aps/:id/snapshot', async (req, res) => {
 // Compare two APs
 app.get('/api/aps/:id1/compare/:id2', async (req, res) => {
   const { id1, id2 } = req.params;
-  const client1 = getClient(id1);
-  const client2 = getClient(id2);
+  const client1 = getFreshClient(id1);
+  const client2 = getFreshClient(id2);
 
   if (!client1 || !client2) return res.status(404).json({ error: 'AP not found or disabled' });
 
@@ -264,7 +263,7 @@ app.get('/api/aps/:id1/compare/:id2', async (req, res) => {
 
 // Write config to AP
 app.post('/api/aps/:id/set', async (req, res) => {
-  const client = getClient(req.params.id);
+  const client = getFreshClient(req.params.id);
   if (!client) return res.status(404).json({ error: 'AP not found or disabled' });
 
   const { module: moduleName, params } = req.body;
@@ -293,7 +292,7 @@ app.post('/api/cleanup/ssids', async (req, res) => {
   if (!targets || !targets.length) return res.status(400).json({ error: 'No targets' });
   const results = {};
   for (const apId of targets) {
-    const client = getClient(apId);
+    const client = getFreshClient(apId);
     if (!client) { results[apId] = { success: false, error: 'AP not found' }; continue; }
     try {
       const def = getModuleDef(client.model);
@@ -316,7 +315,7 @@ app.post('/api/reboot', async (req, res) => {
   if (!targets || !targets.length) return res.status(400).json({ error: 'No targets' });
   const results = {};
   for (const apId of targets) {
-    const client = getClient(apId);
+    const client = getFreshClient(apId);
     if (!client) { results[apId] = { success: false, error: 'AP not found' }; continue; }
     try {
       await client.setModule('sysReboot', {});
@@ -328,7 +327,7 @@ app.post('/api/reboot', async (req, res) => {
 
 // Uplink Detection get/set
 app.post('/api/aps/:id/uplink', async (req, res) => {
-  const client = getClient(req.params.id);
+  const client = getFreshClient(req.params.id);
   if (!client) return res.status(404).json({ error: 'AP not found' });
   const { enable, timeInterval, hostIp1, hostIp2 } = req.body;
   try {
@@ -348,10 +347,40 @@ app.get('/api/modules/:model', (req, res) => {
   });
 });
 
+// Get field definitions for editor
+app.get('/api/fields/:model', (req, res) => {
+  const defs = getFieldDefs(req.params.model);
+  res.json(defs);
+});
+
 // ── Firmware Upgrade API ──────────────────────────────────
 
+// Get firmware info for all APs
+app.get('/api/firmware', async (_req, res) => {
+  const config = loadConfig();
+  const password = getPassword();
+
+  const promises = config.aps.filter(a => a.enabled !== false).map(async (ap) => {
+    try {
+      const client = new TendaClient(ap.ip, password, { model: ap.model, location: ap.location });
+      await client.login();
+      const data = await client.getModules({ sysUpgradeGet: {} });
+      return {
+        id: ap.id, name: ap.name, ip: ap.ip, model: ap.model,
+        firmware: (data.sysUpgradeGet || {}).version || null,
+        firmwareDate: (data.sysUpgradeGet || {}).date || null,
+      };
+    } catch (err) {
+      return { id: ap.id, name: ap.name, ip: ap.ip, model: ap.model, firmware: null, error: err.message };
+    }
+  });
+  const results = await Promise.all(promises);
+  res.json(results);
+});
+
+// Get firmware info for one AP
 app.get('/api/aps/:id/firmware', async (req, res) => {
-  const client = getClient(req.params.id);
+  const client = getFreshClient(req.params.id);
   if (!client) return res.status(404).json({ error: 'AP not found' });
   try {
     await client.login();
@@ -369,8 +398,9 @@ app.get('/api/aps/:id/firmware', async (req, res) => {
   }
 });
 
+// Check online upgrade availability
 app.get('/api/aps/:id/firmware/check', async (req, res) => {
-  const client = getClient(req.params.id);
+  const client = getFreshClient(req.params.id);
   if (!client) return res.status(404).json({ error: 'AP not found' });
   try {
     await client.login();
@@ -380,6 +410,7 @@ app.get('/api/aps/:id/firmware/check', async (req, res) => {
       id: client._meta.id,
       name: client._meta.name,
       status: info.status,
+      // status: 0=detecting, 1=latest, 2=available, 5=server error
       newVersion: info.new_version || null,
       description: info.description || null,
     });
@@ -388,8 +419,9 @@ app.get('/api/aps/:id/firmware/check', async (req, res) => {
   }
 });
 
+// Trigger online upgrade download
 app.post('/api/aps/:id/firmware/online-upgrade', async (req, res) => {
-  const client = getClient(req.params.id);
+  const client = getFreshClient(req.params.id);
   if (!client) return res.status(404).json({ error: 'AP not found' });
   try {
     await client.login();
@@ -398,14 +430,16 @@ app.post('/api/aps/:id/firmware/online-upgrade', async (req, res) => {
       id: client._meta.id,
       name: client._meta.name,
       status: (data.goDownload || {}).status,
+      // status: 0/2 = downloading, 2 = done → will reboot
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+// Upload local firmware file to AP
 app.post('/api/aps/:id/firmware/upload', upload.single('firmware'), async (req, res) => {
-  const client = getClient(req.params.id);
+  const client = getFreshClient(req.params.id);
   if (!client) return res.status(404).json({ error: 'AP not found' });
   if (!req.file) return res.status(400).json({ error: 'No firmware file uploaded' });
   const originalName = req.file.originalname || '';
@@ -413,33 +447,36 @@ app.post('/api/aps/:id/firmware/upload', upload.single('firmware'), async (req, 
     return res.status(400).json({ error: 'File must be .bin format' });
   }
   try {
+    // Ensure we have a session
     if (!client.cookie) await client.login();
-    const FormData = require('form-data');
+
+    // Build multipart form data (FormData is global in Node 18+)
     const form = new FormData();
-    form.append('FormUpload', req.file.buffer, {
-      filename: originalName,
-      contentType: 'application/octet-stream',
-    });
+    form.append('FormUpload', new Blob([req.file.buffer]), originalName);
+
     const fetchUrl = `http://${client.host}/cgi-bin/upgrade`;
-    const httpRes = await require('node-fetch')(fetchUrl, {
+    const httpRes = await fetch(fetchUrl, {
       method: 'POST',
       body: form,
-      headers: { ...form.getHeaders(), Cookie: client.cookie },
-      timeout: 120000,
+      headers: {
+        Cookie: client.cookie,
+      },
+      signal: AbortSignal.timeout(120000),
     });
+
     const text = await httpRes.text();
     let data;
     try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
     const errCode = data.errCode;
     const errMap = {
-      '0': 'Success — rebooting (~3 min)',
-      '1000': 'Invalid mirroring',
-      '1001': 'File format error',
-      '1002': 'Firmware verification failed',
-      '1003': 'Wrong file size',
-      '1004': 'Generic upgrade error',
-      '1005': 'Insufficient memory',
+      '0': 'Successo — riavvio in corso (~3 min)',
+      '1000': 'Mirroring non valido',
+      '1001': 'Errore formato file',
+      '1002': 'Errore verifica firmware',
+      '1003': 'Dimensione file errata',
+      '1004': 'Errore generico di upgrade',
+      '1005': 'Memoria insufficiente',
     };
 
     res.json({
@@ -447,7 +484,7 @@ app.post('/api/aps/:id/firmware/upload', upload.single('firmware'), async (req, 
       name: client._meta.name,
       success: errCode === '0',
       errCode,
-      message: errMap[errCode] || `Error code: ${errCode}`,
+      message: errMap[errCode] || `Codice errore: ${errCode}`,
       raw: data,
     });
   } catch (err) {
@@ -455,6 +492,7 @@ app.post('/api/aps/:id/firmware/upload', upload.single('firmware'), async (req, 
   }
 });
 
+// Batch firmware upgrade (upload same file to multiple APs sequentially)
 app.post('/api/firmware/batch-upload', upload.single('firmware'), async (req, res) => {
   const { targets } = req.body;
   if (!targets) return res.status(400).json({ error: 'No targets' });
@@ -468,22 +506,18 @@ app.post('/api/firmware/batch-upload', upload.single('firmware'), async (req, re
 
   const results = {};
   for (const apId of targetList) {
-    const client = getClient(apId);
+    const client = getFreshClient(apId);
     if (!client) { results[apId] = { success: false, error: 'AP not found' }; continue; }
     try {
       if (!client.cookie) await client.login();
-      const FormData = require('form-data');
       const form = new FormData();
-      form.append('FormUpload', req.file.buffer, {
-        filename: originalName,
-        contentType: 'application/octet-stream',
-      });
+      form.append('FormUpload', new Blob([req.file.buffer]), originalName);
       const fetchUrl = `http://${client.host}/cgi-bin/upgrade`;
-      const httpRes = await require('node-fetch')(fetchUrl, {
+      const httpRes = await fetch(fetchUrl, {
         method: 'POST',
         body: form,
-        headers: { ...form.getHeaders(), Cookie: client.cookie },
-        timeout: 120000,
+        headers: { Cookie: client.cookie },
+        signal: AbortSignal.timeout(120000),
       });
       const text = await httpRes.text();
       let data;
@@ -491,8 +525,9 @@ app.post('/api/firmware/batch-upload', upload.single('firmware'), async (req, re
       results[apId] = {
         success: data.errCode === '0',
         errCode: data.errCode,
-        message: data.errCode === '0' ? 'Upload OK — rebooting' : `Error ${data.errCode}`,
+        message: data.errCode === '0' ? 'Upload OK — riavvio in corso' : `Errore ${data.errCode}`,
       };
+      // Wait a bit before next AP to avoid overloading
       if (data.errCode === '0') await new Promise(r => setTimeout(r, 2000));
     } catch (err) {
       results[apId] = { success: false, error: err.message };
@@ -501,10 +536,10 @@ app.post('/api/firmware/batch-upload', upload.single('firmware'), async (req, re
   res.json({ results });
 });
 
-// ── MQTT Integration (optional) ──────────────────────────
-const MQTT_BROKER = process.env.MQTT_BROKER || '';
+// ── MQTT Integration ──────────────────────────────────────
+const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://mosquitto:1883';
 const MQTT_BASE = 'homeassistant/sensor/tenda_ap';
-const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || '120', 10) * 1000;
+const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || '120', 10) * 1000; // seconds
 
 let mqttClient = null;
 let pollTimer = null;
@@ -521,13 +556,10 @@ function getMqttOptions() {
 }
 
 function initMqtt() {
-  if (!MQTT_BROKER) {
-    console.log('[MQTT] No broker configured — MQTT disabled');
-    return;
-  }
   try {
     mqttClient = mqtt.connect(MQTT_BROKER, getMqttOptions());
     mqttClient.on('connect', () => console.log('[MQTT] Connected to', MQTT_BROKER));
+    mqttClient.on('error', (err) => console.error('[MQTT] Error:', err.message));
     mqttClient.on('error', (err) => console.error('[MQTT] Error:', err.message));
     mqttClient.on('offline', () => console.log('[MQTT] Offline'));
     publishDiscovery();
@@ -541,6 +573,7 @@ function publishDiscovery() {
   const config = loadConfig();
   for (const ap of config.aps) {
     if (ap.enabled === false) continue;
+    // Main status sensor
     const discMain = {
       uniq_id: `tenda_${ap.id}`,
       name: null,
@@ -556,10 +589,12 @@ function publishDiscovery() {
 
 async function pollApStatus() {
   const config = loadConfig();
-  for (const ap of config.aps) {
-    if (ap.enabled === false) continue;
+  const enabledAps = config.aps.filter(ap => ap.enabled !== false);
+  
+  // Poll all APs in parallel (was sequential — could block for minutes if APs offline)
+  await Promise.allSettled(enabledAps.map(async (ap) => {
     const client = getClient(ap.id);
-    if (!client) continue;
+    if (!client) return;
     try {
       const def = getModuleDef(client.model);
       const status = { online: false, clients_24g: 0, clients_5g: 0, channel_24g: '', channel_5g: '', power_24g: '', power_5g: '', ssid: '', ip: ap.ip, location: ap.location || '' };
@@ -588,22 +623,27 @@ async function pollApStatus() {
       status.ssid = s0.ssid || '';
       status.last_seen = new Date().toISOString();
       
-      mqttClient.publish(`${MQTT_BASE}/${ap.id}/state`, 'online', { retain: true, qos: 1 });
+      const state = 'online';
+      mqttClient.publish(`${MQTT_BASE}/${ap.id}/state`, state, { retain: true, qos: 1 });
       mqttClient.publish(`${MQTT_BASE}/${ap.id}/attrs`, JSON.stringify(status), { retain: true, qos: 1 });
       apStatus.set(ap.id, status);
     } catch (err) {
+      // Mark client as stale so next getClient() recreates it with fresh session
+      const cachedClient = clients.get(ap.id);
+      if (cachedClient) cachedClient._stale = true;
       mqttClient.publish(`${MQTT_BASE}/${ap.id}/state`, 'offline', { retain: true, qos: 1 });
       mqttClient.publish(`${MQTT_BASE}/${ap.id}/attrs`, JSON.stringify({ online: false, ip: ap.ip, last_error: err.message, last_seen: (apStatus.get(ap.id) || {}).last_seen || '' }), { retain: true, qos: 1 });
       apStatus.set(ap.id, { ...apStatus.get(ap.id), online: false });
     }
-  }
+  }));
 }
 
 function startPolling() {
-  pollApStatus();
+  pollApStatus(); // initial
   pollTimer = setInterval(pollApStatus, POLL_INTERVAL);
 }
 
+// API to get cached MQTT status
 app.get('/api/status/mqtt', (req, res) => {
   const out = {};
   for (const [id, s] of apStatus) out[id] = s;
@@ -611,7 +651,7 @@ app.get('/api/status/mqtt', (req, res) => {
 });
 
 // ── Start ───────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Tenda Multi-AP Manager listening on port ${PORT}`);
   if (isSetupComplete()) {
     initMqtt();
@@ -619,3 +659,21 @@ app.listen(PORT, () => {
     console.log('Setup required — open the UI to configure your APs');
   }
 });
+
+// ── Graceful Shutdown (#7) ───────────────────────────────
+function gracefulShutdown(signal) {
+  console.log(`[Server] ${signal} received — shutting down gracefully...`);
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (mqttClient) {
+    try { mqttClient.end(true); } catch {}
+    mqttClient = null;
+  }
+  server.close(() => {
+    console.log('[Server] All connections closed — exiting');
+    process.exit(0);
+  });
+  // Force exit after 5s if server.close hangs
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
